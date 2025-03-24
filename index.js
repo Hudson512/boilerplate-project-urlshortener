@@ -1,18 +1,18 @@
 require('dotenv').config();
 const express = require('express');
-const bodyParse = require('body-parser');
 const cors = require('cors');
 const dns = require('dns');
+const bodyParser = require('body-parser');
 const app = express();
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(bodyParse.json());
-app.use(bodyParse.urlencoded({extended: true}))
 
 app.use('/public', express.static(`${process.cwd()}/public`));
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
 app.get('/', function(req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
@@ -23,74 +23,51 @@ app.get('/api/hello', function(req, res) {
   res.json({ greeting: 'hello API' });
 });
 
-let bd = [];
-let contador = 1;
+// Variáveis para armazenamento em memória dos mapeamentos de URL
+const urlDatabase = {};
+let urlCounter = 1;
 
-app.post('/api/shorturl', async function (req, res){
-  const { url } = req.body;
-  console.log("bd: ", bd);
-  
-  if (!url){
-    return res.json({"error":"Invalid Hostname"});
-  }
-  
+// Função auxiliar para validar o formato da URL
+function isValidUrl(url) {
   try {
-    const temp = await verificarURL(url);
-    console.log("temp: ", temp);
-    
-    if (!temp) {
-      return res.json({"error":"Invalid Hostname"});
-    }
-    
-    // Verificar se está na base de dados
-    let dado = bd.find(item => item.original_url === url);
-    console.log("dado: ", dado);
-    
-    if (!dado) {
-      bd.push({"original_url": url, "short_url": contador});
-      res.json({"original_url": url, "short_url": contador});
-      contador++;
-    } else {
-      res.json({"original_url": url, "short_url": dado.short_url});
-    }
-  } catch (error) {
-    console.error(error);
-    res.json({"error":"Invalid Hostname"});
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch (err) {
+    return false;
   }
-});
-
-// Rota para redirecionar URLs encurtadas
-app.get('/api/shorturl/:short_url', (req, res) => {
-  const { short_url } = req.params;
-  const urlData = bd.find(item => item.short_url == short_url);
-
-  if (!urlData) {
-    return res.json({ "error": "No URL found for this ID" });
-  }
-  
-  res.redirect(urlData.original_url);
-});
-
-function verificarURL(url) {
-  return new Promise((resolve) => {
-    try {
-      const { hostname } = new URL(url);
-
-      dns.resolve(hostname, (err) => {
-        if (err) {
-          console.log(`URL inválida ou inacessível: ${url}`);
-          resolve(false);
-        } else {
-          console.log(`URL válida: ${url}`);
-          resolve(true);
-        }
-      });
-    } catch (err) {
-      console.log(`URL malformada: ${url}`);
-      resolve(false);
-    }
-  });
 }
+
+// Endpoint POST para criação do URL encurtado
+app.post('/api/shorturl', (req, res) => {
+  const originalUrl = req.body.url;
+
+  if (!isValidUrl(originalUrl)) {
+    return res.json({ error: 'invalid url' });
+  }
+
+  const hostname = new URL(originalUrl).hostname;
+  dns.lookup(hostname, (err) => {
+    if (err) {
+      return res.json({ error: 'invalid url' });
+    }
+
+    const shortUrl = urlCounter++;
+    urlDatabase[shortUrl] = originalUrl;
+    res.json({ original_url: originalUrl, short_url: shortUrl });
+  });
+});
+
+// Endpoint GET para redirecionar para a URL original
+app.get('/api/shorturl/:shortUrl', (req, res) => {
+  const shortUrl = req.params.shortUrl;
+  const originalUrl = urlDatabase[shortUrl];
+
+  if (!originalUrl) {
+    return res.status(404).json({ error: 'No short URL found' });
+  }
+
+  res.redirect(originalUrl);
+});
 
 app.listen(port, function() {
   console.log(`Listening on port ${port}`);
